@@ -1,0 +1,335 @@
+import http.server
+import socketserver
+import time
+
+print("========================================")
+print("--- GURNAM'S PACKAGING DIE-LINE TOOL ---")
+print("========================================\n")
+while True:
+    print ("measurement")
+    print ("1. MM (Millimeter)")
+    print("2. Inches")
+    unit_choice= input("option(1-2):").strip()
+    if  unit_choice in ["1","2"]:
+       break
+    else:
+       print ( ">>>>> wrong key <<<<<")
+
+def get_input(prompt, default_val):
+    while True:
+        user_input = input(f"{prompt} [Default: {default_val}]: ").strip()
+        if not user_input:
+            return float(default_val)
+        try:
+            return float(user_input)
+        except ValueError:
+            print(f"❌ Error: enter only numbers")
+
+if unit_choice == "2":
+    L_in = get_input("Length (Inches)", "10")
+    W_in = get_input("Width (Inches)", "8")
+    H_in = get_input("Height (Inches)", "6")
+    glue_in = get_input("Glue Flap Width (Inches)", "0.5")
+    L = L_in * 25.4
+    W = W_in * 25.4
+    H = H_in * 25.4
+    custom_glue_w = glue_in * 25.4
+    display_unit = "in"
+    disp_L, disp_W, disp_H = L_in, W_in, H_in
+else:
+    L = get_input("Length (mm)", "250")
+    W = get_input("Width (mm)", "200")
+    H = get_input("Height (mm)", "150")
+    custom_glue_w = get_input("Glue Flap Width (mm)", "15")
+    display_unit = "mm"
+    disp_L, disp_W, disp_H = L, W, H
+
+# --- MATERIAL SELECTION LOOP ---
+while True:
+    print("\nMaterial Type:")
+    print("1. Duplex Board (0mm)")
+    print("2. 2mm Flute Box")
+    print("3. 3mm Flute Box / 5-Ply")
+    
+    material = input("Option (1-3) [Default: 3]: ").strip()
+    
+    if not material: 
+        material = "3" 
+    
+    if material in ["1", "2", "3"]:
+        margin = 0
+        if material == "2": margin = 2
+        elif material == "3": margin = 3
+        break 
+    else:
+        print("❌ Enter only 1, 2 or 3")
+
+taper_size = get_input("\nTop/bottom flap width size adjustment (mm)", "5")
+
+# --- CORNER ROUNDING RADIUS SELECTION ---
+while True:
+    print("\nFlap Corner Rounding Radius:")
+    print("0. 0 mm (Sharp Corners)")
+    print("1. 10 mm")
+    print("2. 12 mm")
+    print("3. 14 mm")
+    print("4. 16 mm")
+    print("5. 18 mm")
+    print("6. 20 mm")
+    
+    corner_opt = input("Option (0-6) [Default: 0]: ").strip()
+    if not corner_opt:
+        corner_opt = "0"
+    
+    radius_map = {"0": 0, "1": 10, "2": 12, "3": 14, "4": 16, "5": 18, "6": 20}
+    if corner_opt in radius_map:
+        corner_radius = radius_map[corner_opt]
+        break
+    else:
+        print("❌ Enter only numbers between 0 and 6")
+
+# --- BAND CREASE TYPE SELECTION (SINGLE / DOUBLE BAND UP TO 10MM) ---
+while True:
+    print("\nCrease Band Type (For 5-Ply / Heavy Flute Bending):")
+    print("1. Single Crease Line")
+    print("2. Double Band (All creases including glue flap doubled, up to 10mm)")
+    band_opt = input("Option (1-2) [Default: 2]: ").strip()
+    if not band_opt:
+        band_opt = "2"
+    if band_opt in ["1", "2"]:
+        is_double_crease = (band_opt == "2")
+        break
+    else:
+        print("❌ Enter only 1 or 2")
+
+total_double_gap = 3.0
+if is_double_crease:
+    while True:
+        total_double_gap = get_input("Total Double Band Gap (mm) [Up to 10 mm, e.g., 6mm total -> 3mm each side]", "3.0")
+        if 0.5 <= total_double_gap <= 10.0:
+            break
+        print("❌ Please enter a size between 0.5 mm and 10 mm.")
+
+offset_half = total_double_gap / 2.0
+
+final_L = L + (2 * margin)
+final_W = W + (2 * margin)
+flap_h = final_W / 2 
+
+glue_taper = 12.7
+
+total_width = (final_L * 2) + (final_W * 2) + custom_glue_w + 140
+total_height = H + (flap_h * 2) + 160
+ts = int(time.time())
+
+html_head = f"""
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Gurnam's Ultimate Die-Line with Double Band</title>
+    <!-- jsPDF Library for download -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <style>
+        body {{ background-color: #222; color: white; font-family: sans-serif; text-align: center; margin: 20px; }}
+        #dieSvg {{ background: white; margin-top: 20px; border: 3px solid #555; display: block; margin-left: auto; margin-right: auto; }}
+        .btn {{ 
+            background-color: #28a745; color: white; border: none; padding: 12px 24px; 
+            font-size: 16px; font-weight: bold; border-radius: 5px; cursor: pointer; 
+        }}
+    </style>
+</head>
+<body>
+    <h2>Gurnam's Pro Standard Die-Line</h2>
+    <button class="btn" onclick="downloadPDF()">📥 Download Die-Line PDF</button>
+    <br>
+    <!-- SVG Element -->
+    <svg id="dieSvg" width="{total_width}" height="{total_height}"></svg>
+"""
+
+html_script = f"""
+<script>
+    var svg = document.getElementById('dieSvg');
+
+    function createPath(d, stroke="red", strokeWidth="2", strokeDasharray="none") {{
+        var path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        path.setAttribute("d", d);
+        path.setAttribute("stroke", stroke);
+        path.setAttribute("stroke-width", strokeWidth);
+        if(strokeDasharray !== "none") {{
+            path.setAttribute("stroke-dasharray", strokeDasharray);
+        }}
+        path.setAttribute("fill", "none");
+        svg.appendChild(path);
+    }}
+
+    function createText(x, y, text, size="13", weight="bold", color="black", anchor="middle") {{
+        var txt = document.createElementNS("http://www.w3.org/2000/svg", "text");
+        txt.setAttribute("x", x);
+        txt.setAttribute("y", y);
+        txt.setAttribute("font-size", size);
+        txt.setAttribute("font-weight", weight);
+        txt.setAttribute("fill", color);
+        txt.setAttribute("font-family", "sans-serif");
+        txt.setAttribute("text-anchor", anchor);
+        txt.textContent = text;
+        svg.appendChild(txt);
+    }}
+
+    var start_x = 70;
+    var start_y = 80 + {flap_h};
+    var h = {H};
+    var l = {final_L};
+    var w = {final_W};
+    var fh = {flap_h};
+    var tp = {taper_size};
+    var gw = {custom_glue_w};
+    var gt = {glue_taper};
+    var cr = {corner_radius};
+    var isDoubleCrease = {"true" if is_double_crease else "false"};
+    var offHalf = {offset_half};
+    var unit = "{display_unit}";
+
+    createText(start_x + ((l*2 + w*2)/2), 35, "BOX SPECS: L = {disp_L} " + unit + "  |  W = {disp_W} " + unit + "  |  H = {disp_H} " + unit + (isDoubleCrease ? " [Double Band: ±" + offHalf + "mm]" : " [Single Crease]"), "15", "bold", "#2c3e50");
+
+    var totalBoxWidth = (l*2 + w*2);
+
+    var bodyPath = "";
+    
+    // Horizontal Top & Bottom Crease Lines
+    if (isDoubleCrease) {{
+        var topLine1 = start_y - offHalf;
+        var topLine2 = start_y + offHalf;
+        var botLine1 = (start_y + h) - offHalf;
+        var botLine2 = (start_y + h) + offHalf;
+        
+        bodyPath += "M " + start_x + " " + topLine1 + " H " + (start_x + totalBoxWidth) + " ";
+        bodyPath += "M " + start_x + " " + topLine2 + " H " + (start_x + totalBoxWidth) + " ";
+        bodyPath += "M " + start_x + " " + botLine1 + " H " + (start_x + totalBoxWidth) + " ";
+        bodyPath += "M " + start_x + " " + botLine2 + " H " + (start_x + totalBoxWidth) + " ";
+    }} else {{
+        var topLine2 = start_y;
+        var botLine1 = start_y + h;
+        bodyPath += "M " + start_x + " " + start_y + " H " + (start_x + totalBoxWidth) + " ";
+        bodyPath += "M " + start_x + " " + (start_y + h) + " H " + (start_x + totalBoxWidth) + " ";
+    }}
+    
+    var cur = start_x;
+    var panelWidths = [l, w, l, w];
+    var panelLabels = ["Length (L)", "Width (W)", "Length (L)", "Width (W)"];
+    
+    // Vertical Panel Crease Lines (Strictly restricted inside horizontal lines: topLine2 to botLine1)
+    panelWidths.forEach((p, idx) => {{ 
+        var jointX = cur + p;
+        
+        if (idx < panelWidths.length - 1) {{
+            if (isDoubleCrease) {{
+                var leftLineX = jointX - offHalf;
+                var rightLineX = jointX + offHalf;
+                bodyPath += "M " + leftLineX + " " + topLine2 + " V " + botLine1 + " ";
+                bodyPath += "M " + rightLineX + " " + topLine2 + " V " + botLine1 + " ";
+            }} else {{
+                bodyPath += "M " + jointX + " " + topLine2 + " V " + botLine1 + " ";
+            }}
+        }}
+        
+        cur = jointX;
+    }});
+    
+    // Absolute start vertical edge of box body
+    bodyPath += "M " + start_x + " " + start_y + " V " + (start_y + h) + " ";
+
+    var end_x = start_x + totalBoxWidth;
+
+    // Glue Flap Crease Line & Outer Boundary (Double Band applied to glue flap if enabled)
+    if (isDoubleCrease) {{
+        var gLine1 = end_x - offHalf;
+        var gLine2 = end_x + offHalf;
+        bodyPath += "M " + gLine1 + " " + topLine2 + " V " + botLine1 + " ";
+        bodyPath += "M " + gLine2 + " " + topLine2 + " V " + botLine1 + " ";
+        createPath(bodyPath);
+        createPath("M " + gLine2 + " " + start_y + " L " + (gLine2 + gw) + " " + (start_y + gt) + " L " + (gLine2 + gw) + " " + (start_y + h - gt) + " L " + gLine2 + " " + (start_y + h));
+        createText(gLine2 + (gw / 2), start_y + (h / 2), "Glue", "11", "normal", "#666");
+    }} else {{
+        bodyPath += "M " + end_x + " " + start_y + " V " + (start_y + h) + " ";
+        createPath(bodyPath);
+        createPath("M " + end_x + " " + start_y + " L " + (end_x + gw) + " " + (start_y + gt) + " L " + (end_x + gw) + " " + (start_y + h - gt) + " L " + end_x + " " + (start_y + h));
+        createText(end_x + (gw / 2), start_y + (h / 2), "Glue", "11", "normal", "#666");
+    }}
+
+    var label_x = start_x;
+    panelWidths.forEach((pw, i) => {{
+        var centerX = label_x + (pw / 2);
+        var centerY = start_y + (h / 2);
+        createText(centerX, centerY - 12, panelLabels[i], "11", "bold", "#c0392b");
+        createText(centerX, centerY + 10, pw.toFixed(1) + " " + unit, "12", "bold", "#2980b9");
+        label_x += pw;
+    }});
+
+    var lx = start_x;
+    panelWidths.forEach((pw, i) => {{
+        let r = Math.min(cr, pw / 2 - 2, fh - 2);
+        if (r < 0) r = 0;
+
+        let topBoundaryY = isDoubleCrease ? (start_y - offHalf) : start_y;
+        let botBoundaryY = isDoubleCrease ? ((start_y + h) + offHalf) : (start_y + h);
+
+        if (i % 2 === 0) {{ // L Type
+            if (r > 0) {{
+                createPath("M " + lx + " " + topBoundaryY + " L " + (lx + gt) + " " + (topBoundaryY - gt) + " L " + (lx + gt) + " " + (start_y - fh + r) + " A " + r + " " + r + " 0 0 1 " + (lx + gt + r) + " " + (start_y - fh) + " L " + (lx + pw - gt - r) + " " + (start_y - fh) + " A " + r + " " + r + " 0 0 1 " + (lx + pw - gt) + " " + (start_y - fh + r) + " L " + (lx + pw - gt) + " " + (topBoundaryY - gt) + " L " + (lx + pw) + " " + topBoundaryY);
+                createPath("M " + lx + " " + botBoundaryY + " L " + (lx + gt) + " " + (botBoundaryY + gt) + " L " + (lx + gt) + " " + (start_y + h + fh - r) + " A " + r + " " + r + " 0 0 0 " + (lx + gt + r) + " " + (start_y + h + fh) + " L " + (lx + pw - gt - r) + " " + (start_y + h + fh) + " A " + r + " " + r + " 0 0 0 " + (lx + pw - gt) + " " + (start_y + h + fh - r) + " L " + (lx + pw - gt) + " " + (botBoundaryY + gt) + " L " + (lx + pw) + " " + botBoundaryY);
+            }} else {{
+                createPath("M " + lx + " " + topBoundaryY + " L " + (lx + gt) + " " + (topBoundaryY - gt) + " L " + (lx + gt) + " " + (start_y - fh) + " L " + (lx + pw - gt) + " " + (start_y - fh) + " L " + (lx + pw - gt) + " " + (topBoundaryY - gt) + " L " + (lx + pw) + " " + topBoundaryY);
+                createPath("M " + lx + " " + botBoundaryY + " L " + (lx + gt) + " " + (botBoundaryY + gt) + " L " + (lx + gt) + " " + (start_y + h + fh) + " L " + (lx + pw - gt) + " " + (start_y + h + fh) + " L " + (lx + pw - gt) + " " + (botBoundaryY + gt) + " L " + (lx + pw) + " " + botBoundaryY);
+            }}
+        }} else {{ // W Type
+            if (r > 0) {{
+                createPath("M " + lx + " " + topBoundaryY + " V " + (start_y - fh + r) + " A " + r + " " + r + " 0 0 1 " + (lx + r) + " " + (start_y - fh) + " H " + (lx + pw - r) + " A " + r + " " + r + " 0 0 1 " + (lx + pw) + " " + (start_y - fh + r) + " V " + topBoundaryY);
+                createPath("M " + lx + " " + botBoundaryY + " V " + (start_y + h + fh - r) + " A " + r + " " + r + " 0 0 0 " + (lx + r) + " " + (start_y + h + fh) + " H " + (lx + pw - r) + " A " + r + " " + r + " 0 0 0 " + (lx + pw) + " " + (start_y + h + fh - r) + " V " + botBoundaryY);
+            }} else {{
+                createPath("M " + lx + " " + topBoundaryY + " V " + (start_y - fh) + " H " + (lx + pw) + " V " + topBoundaryY);
+                createPath("M " + lx + " " + botBoundaryY + " V " + (start_y + h + fh) + " H " + (lx + pw) + " V " + botBoundaryY);
+            }}
+        }}
+        lx += pw;
+    }});
+</script>
+"""
+
+pdf_script = """
+<script>
+    function downloadPDF() {
+        const { jsPDF } = window.jspdf;
+        const svgData = new XMLSerializer().serializeToString(svg);
+        const canvas = document.createElement("canvas");
+        canvas.width = svg.getAttribute('width');
+        canvas.height = svg.getAttribute('height');
+        const ctx = canvas.getContext("2d");
+        const img = new Image();
+        img.onload = () => {
+            ctx.fillStyle = "white"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(img, 0, 0);
+            var pdf = new jsPDF('l', 'px', [canvas.width, canvas.height]);
+            pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 0, 0, canvas.width, canvas.height);
+            pdf.save('Gurnam_Dieline.pdf');
+        };
+        img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgData)));
+    }
+</script>
+</body>
+</html>
+"""
+
+html_content = html_head + html_script + pdf_script
+with open("index.html", "w") as f:
+    f.write(html_content)
+
+PORT = 8000
+print(f"\n🌍 VERTICAL CREASE LINES CONFINED INSIDE HORIZONTAL BANDS SUCCESSFULLY!")
+print(f"👉 Link: http://localhost:{PORT}/index.html?v={ts}")
+
+Handler = http.server.SimpleHTTPRequestHandler
+with socketserver.TCPServer(("", PORT), Handler) as httpd:
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        print("\nServer Closed.")
